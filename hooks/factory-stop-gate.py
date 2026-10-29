@@ -1,36 +1,78 @@
 #!/usr/bin/env python3
 # Stop gate. Register on SubagentStop. An agent may not return a claim
-# without a receipt it recorded in this run.
-import json, pathlib, re, sys
-SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+# without a receipt it recorded in this run. Once a job is bound it fails
+# CLOSED: a corrupt, forged or unverifiable log blocks. Malformed stdin: exit 0.
+import hmac, json, os, re, sys
 
-e = json.load(sys.stdin)
-if e.get("stop_hook_active"):
-    sys.exit(0)                         # one retry, never a loop
-msg = e.get("last_assistant_message") or ""
-if "claims:" not in msg:
-    sys.exit(0)                         # nothing claimed (Scribe), nothing to check
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import factory_common as fc
 
-def job_of(cwd):
-    for d in [pathlib.Path(cwd), *pathlib.Path(cwd).parents]:
-        f = d / ".factory-job"
-        if f.is_file():
-            slug = f.read_text().strip()
-            return slug if SLUG.fullmatch(slug) else None
+ID = re.compile(r"R-[0-9a-f]{6}")
 
-job = job_of(e.get("cwd", "."))
+
+def block(reason):
+    print(json.dumps({"decision": "block", "reason": reason}))
+    sys.exit(0)
+
+
+try:
+    e = json.load(sys.stdin)
+    if not isinstance(e, dict) or e.get("stop_hook_active"):
+        sys.exit(0)                     # one retry, never a loop
+    msg = e.get("last_assistant_message") or ""
+    if not isinstance(msg, str) or "claims:" not in msg:
+        sys.exit(0)                     # nothing claimed (Scribe), nothing to check
+    job = fc.job_of(e.get("cwd", "."))
+    agent, run = fc.agent_run(e)
+except SystemExit:
+    raise
+except Exception:
+    sys.exit(0)
 if not job:
     sys.exit(0)
 
-block = msg.split("claims:", 1)[1]
-block = re.split(r"\n\s*(unverified|asks|friction|details):", block)[0]
-claims = [l.strip() for l in block.splitlines() if l.strip().startswith("-")]
-log = (pathlib.Path.home() / ".brain/job" / job / "relay/receipts"
-       / f"{e.get('agent_type')}-{e.get('agent_id')}.jsonl")
-known = {json.loads(l)["id"] for l in log.read_text().splitlines()} if log.exists() else set()
+section = msg.split("claims:", 1)[1]
+section = re.split(r"\n\s*(unverified|asks|friction|details):", section)[0]
+claims = [l.strip() for l in section.splitlines() if l.strip()]
+if not claims:
+    sys.exit(0)
 
-bare = [c for c in claims if not re.search(r"R-[0-9a-f]{6}", c)]
-unknown = sorted(set(re.findall(r"R-[0-9a-f]{6}", block)) - known)
+try:
+    key = fc.load_key(create=False)
+    if key is None:
+        block("Receipt key is missing (~/.config/factory/receipt.key): receipts cannot be verified.")
+    log = fc.log_path(job, agent, run)
+    known, problems = set(), []
+    lines = log.read_text().splitlines() if log.exists() else []
+    for n, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+            if not isinstance(rec, dict) or not ID.fullmatch(str(rec.get("id", ""))):
+                raise ValueError
+        except ValueError:
+            problems.append(f"corrupt log line {n}")
+            continue
+        mac = rec.get("mac")
+        if not isinstance(mac, str):
+            problems.append(f"missing mac on line {n}")
+        elif not hmac.compare_digest(mac, fc.mac_of(key, rec)):
+            problems.append(f"bad mac on line {n}")
+        elif fc.safe_name(rec.get("agent"), "") != agent or fc.safe_name(rec.get("run"), "") != run:
+            problems.append(f"record on line {n} belongs to another run")
+        else:
+            known.add(rec["id"])
+    if problems:
+        block("Receipt log failed verification (" + "; ".join(problems[:5]) + "). Do not edit the log; "
+              "re-run the checks to record fresh receipts, or move the claims under unverified.")
+except SystemExit:
+    raise
+except Exception as ex:
+    block(f"Receipt log could not be verified ({type(ex).__name__}).")
+
+bare = [c for c in claims if not ID.search(c)]
+unknown = sorted(set(ID.findall(section)) - known)
 if bare or unknown:
     reason = "Every claim cites a receipt you recorded in this run."
     if bare:
@@ -38,4 +80,4 @@ if bare or unknown:
     if unknown:
         reason += " Not in your log: " + ", ".join(unknown) + "."
     reason += " Prove it now, or move it under unverified."
-    print(json.dumps({"decision": "block", "reason": reason}))
+    block(reason)
