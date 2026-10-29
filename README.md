@@ -2,14 +2,15 @@
 
 Claude Code plugin skeleton (name `factory`, v0.1.0): the factory contract, git guardrails, receipt hooks, and templates.
 
-**Nothing is installed or registered yet.** No agents or skills exist; no settings, symlinks, or hooks were touched.
+**Nothing is installed or registered yet.** Two agents (scribe, shipwright) exist; no skills; no settings, symlinks, or hooks were touched.
 
 ## Layout
 - `.claude-plugin/plugin.json` plugin manifest
 - `knowledge/` contract.md (shared by every agent), README.txt
 - `hooks/` hooks.json plus `factory-git-guardrails.py` (PreToolUse Bash), `factory-state-guard.py` (PreToolUse, protects factory state), `factory-bind.py` (CLI: bind a worktree to a job), `factory-receipts.py` (PostToolUse and PostToolUseFailure), `factory-stop-gate.py` (SubagentStop)
 - `templates/` agent, skill, recipe, profile and job-file templates, roles roster
-- `tests/` hook tests (test_guardrails.py, test_receipts.py)
+- `agents/` role definitions: scribe.md, shipwright.md (R3); README.txt
+- `tests/` hook tests (test_guardrails.py, test_receipts.py, test_state.py) and test_agents.py
 
 ## Tests
     python3 tests/test_guardrails.py

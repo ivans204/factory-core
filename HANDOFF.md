@@ -7,6 +7,7 @@ Extracted templates/roster live in `templates/`; full cookbook text was in a ses
 - **R1 done and verified** (4 commits, HEAD 8882278). Plugin skeleton `factory`: contract, 4 hooks, templates, tests.
   - Verified by orchestrator: 3 test files pass; 18/18 must-block, 10/10 must-pass spot checks; refuter corpus of 104 realistic commands → 0 false positives.
 - **R0 done**: friction report (session scratchpad, not kept). Top: manual commit/push/deploy (21), rejected/broken output (16), continuity (~19), wrong approach (7), interrupts (9).
+- **R3 written 2026-10-29**: `agents/scribe.md` (haiku) and `agents/shipwright.md` (sonnet) as `factory:scribe`, `factory:shipwright`; test_agents.py. Real-use proof (merge, push, draft PR via Shipwright) still pending.
 - **Nothing installed or registered.** Plugin not enabled, no settings.json change, no deny rules, no sandbox.
 
 ## Decisions (and why)
