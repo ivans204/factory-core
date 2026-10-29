@@ -7,26 +7,32 @@ Claude Code plugin skeleton (name `factory`, v0.1.0): the factory contract, git 
 ## Layout
 - `.claude-plugin/plugin.json` plugin manifest
 - `knowledge/` contract.md (shared by every agent), README.txt
-- `hooks/` hooks.json plus `factory-git-guardrails.py` (PreToolUse Bash), `factory-receipts.py` (PostToolUse and PostToolUseFailure), `factory-stop-gate.py` (SubagentStop)
+- `hooks/` hooks.json plus `factory-git-guardrails.py` (PreToolUse Bash), `factory-state-guard.py` (PreToolUse, protects factory state), `factory-bind.py` (CLI: bind a worktree to a job), `factory-receipts.py` (PostToolUse and PostToolUseFailure), `factory-stop-gate.py` (SubagentStop)
 - `templates/` agent, skill, recipe, profile and job-file templates, roles roster
 - `tests/` hook tests (test_guardrails.py, test_receipts.py)
 
 ## Tests
     python3 tests/test_guardrails.py
     python3 tests/test_receipts.py
+    python3 tests/test_state.py
 
 Needs only python3 (stdlib).
 
 ## Threat model
-- Guards against agent mistakes and naive prompt injection; it is not a sandbox.
-- Git commands are parsed (shlex, substitutions, eval, `sh -c`), but variable expansion (`git${IFS}reset`), other interpreters (`python -c`) and scripts are not inspected.
-- Receipts carry an HMAC (key: `~/.config/factory/receipt.key`, mode 0600); the stop gate fails closed on a bad or missing mac.
-- The key is readable by any process running as the user, so the HMAC only holds if permissions block the agent from it.
-- Pair with these rules in settings (NOT applied by this repo):
+- The hooks guard against agent accidents and cheap tricks. They are not a shell parser and not a security boundary.
+- The git guardrails are one linear pass (heredocs, `$(...)`, backticks, `eval`, `sh -c`, `find -exec`); computed command names are refused. Variable tricks beyond that, other interpreters and scripts are not inspected.
+- The receipt HMAC is tamper-evidence, not secrecy: any process running as the user can read the key.
+- The real boundary is the sandbox plus permission deny rules. Recommended (NOT applied by this repo):
 
 ```json
-{"permissions": {"deny": [
-  "Read(~/.config/factory/**)", "Edit(~/.config/factory/**)", "Write(~/.config/factory/**)",
-  "Edit(~/.brain/job/*/relay/receipts/**)", "Write(~/.brain/job/*/relay/receipts/**)"
-]}}
+{
+  "sandbox": {"enabled": true},
+  "permissions": {"deny": [
+    "Read(~/.config/factory/**)", "Edit(~/.config/factory/**)", "Write(~/.config/factory/**)",
+    "Edit(~/.brain/job/*/relay/receipts/**)", "Write(~/.brain/job/*/relay/receipts/**)"
+  ]}
+}
 ```
+
+## Proposed core change: job binding
+Binding moved from `.factory-job` alone to an index (`~/.config/factory/bindings.json`, `{worktree root: slug}`) plus the `.factory-job` file, written together by `hooks/factory-bind.py <worktree> <slug>` (and `--unbind <worktree>`). The index is authoritative: the recorder records under the index slug, and the stop gate blocks with "job binding tampered" if the file is missing or different. A worktree with no index entry still falls back to a plain `.factory-job`.

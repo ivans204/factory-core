@@ -4,18 +4,58 @@ import hashlib, hmac, json, os, pathlib, re
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
+class Job(str):
+    """Job slug. .tampered is True when the binding index and the .factory-job file disagree."""
+    tampered = False
+
+
+def index_path():
+    return pathlib.Path.home() / ".config/factory/bindings.json"
+
+
+def load_index():
+    """{abs worktree root: slug}. {} if there is no index; None if it exists but is unreadable."""
+    p = index_path()
+    if not p.is_file():
+        return {}
+    try:
+        d = json.loads(p.read_text())
+        if isinstance(d, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in d.items()):
+            return d
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _marked(slug, tampered):
+    j = Job(slug)
+    j.tampered = tampered
+    return j
+
+
 def job_of(cwd):
-    # The orchestrator binds a worktree to a job with a .factory-job file at
-    # its root, listed in .git/info/exclude so it is never committed.
+    """Bound job for cwd. The index (~/.config/factory/bindings.json) is authoritative; the
+    .factory-job file must agree. Without an index entry, fall back to the nearest .factory-job."""
     if not isinstance(cwd, str):
         return None
     try:
-        p = pathlib.Path(cwd)
+        p = pathlib.Path(cwd).resolve()
+        idx = load_index()
+        if idx is None:
+            return _marked("tampered-index", True)
+        for d in [p, *p.parents]:
+            slug = idx.get(str(d))
+            if slug is not None:
+                if not SLUG.fullmatch(slug):
+                    return _marked("tampered-index", True)
+                f = d / ".factory-job"
+                ok = f.is_file() and f.read_text().strip() == slug
+                return _marked(slug, not ok)
         for d in [p, *p.parents]:
             f = d / ".factory-job"
             if f.is_file():
                 slug = f.read_text().strip()
-                return slug if SLUG.fullmatch(slug) else None
+                return _marked(slug, False) if SLUG.fullmatch(slug) else None
     except OSError:
         return None
     return None

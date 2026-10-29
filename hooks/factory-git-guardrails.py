@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# Factory git guardrails (PreToolUse, Bash). Refuses commands that have lost
-# work or bypassed the commit gate. Adapted from mattpocock/skills
-# git-guardrails-claude-code (MIT). The human can still run any of these with a
-# `!` prefix, which no PreToolUse hook sees.
+# Factory git guardrails (PreToolUse, Bash). Catches agent mistakes and cheap
+# tricks around destructive git commands and commit-gate bypasses. Adapted from
+# mattpocock/skills git-guardrails-claude-code (MIT). The human can still run
+# any of these with a `!` prefix, which no PreToolUse hook sees.
 #
-# The command is parsed, not grepped: split into simple commands, then each
-# git invocation is analysed after its global options. Substitutions, eval and
-# `sh -c` strings are checked recursively. Not a sandbox: see README.
-import json, os, re, shlex, sys
+# NOT a shell parser and NOT a security boundary (that is the sandbox's job).
+# One linear pass: heredoc bodies out, then $(...)/backtick bodies out, then
+# shlex tokens split into simple commands. Every body is checked exactly once.
+import collections, json, os, re, shlex, signal, sys
 
 class Block(Exception):
     def __init__(self, why, instead):
@@ -17,14 +17,21 @@ class ParseError(Exception):
     pass
 
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-WRAPPERS = {"env", "sudo", "doas", "command", "exec", "time", "nohup", "xargs", "nice", "ionice",
-            "timeout", "builtin", "stdbuf", "setsid", "caffeinate", "{", "}", "!", "if", "then",
-            "do", "else", "elif", "while", "until"}
-ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-BYPASS_ENV = re.compile(r"HUSKY=0|LEFTHOOK=(0|false)")
-HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z0-9_.\-]+)\2")
-SHELL_WORD = re.compile(r"(^|[\s;&|(`])(\S*/)?(bash|sh|zsh|dash|ksh)(\s|$)")
-MAX_DEPTH = 8
+KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac", "{", "}", "!"}
+# wrapper -> options that consume the next token
+WRAPPERS = {
+    "sudo": set("-u -g -h -p -U -r -t -C -D -R -T".split()), "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "-S"}, "time": set(), "nohup": set(), "nice": {"-n"}, "ionice": {"-c", "-n", "-p"},
+    "command": set(), "exec": {"-a"}, "builtin": set(), "setsid": set(), "stdbuf": set(),
+    "xargs": set("-I -n -P -d -L -E -s -a -l -i".split()), "timeout": {"-k", "-s"},
+}
+ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.S)
+DECLARE = {"export", "declare", "typeset", "readonly", "local"}
+SHELL_WORD = re.compile(r"""(^|[\s;&|(`"'])(\S*/)?(bash|sh|zsh|eval|source|\.)(\s|$)""")
+HEREDOC = re.compile(r"""(?<!<)<<(?!<)(-?)\s*(['"]?)([A-Za-z0-9_.\-]+)\2""")
+SPECIAL = re.compile(r"""[\\'"$`()#\n<>]""")
+PLACEHOLDER = "@@SUBST@@"
+GIT_PUSHLIKE = {"commit", "push", "merge", "rebase", "am", "cherry-pick"}
 
 def block(why, instead):
     raise Block(why, instead)
@@ -33,173 +40,213 @@ def bypass():
     block("commit and push gates are not bypassed by agents.",
           "fix what the gate reports, or stop and say what it reported.")
 
-def grab_paren(text, start):
-    """Return (body, index after the closing paren) for a $( ... ) opened before start."""
-    depth, j, q, n = 1, start, None, len(text)
-    while j < n:
-        c = text[j]
-        if q == "'":
-            if c == "'":
-                q = None
-        elif c == "\\":
-            j += 1
-        elif c in "'\"":
-            q = None if q == c else (q or c)
-        elif q is None and c == "(":
-            depth += 1
-        elif q is None and c == ")":
-            depth -= 1
-            if depth == 0:
-                return text[start:j], j + 1
-        j += 1
-    raise ParseError("unbalanced parenthesis")
+def check_assignment(name, value):
+    if ((name == "HUSKY" and value == "0") or (name == "LEFTHOOK" and value in ("0", "false"))
+            or name in ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+            or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))):
+        bypass()
 
-def strip_heredocs(text):
-    """Drop heredoc bodies from text. Returns (text, bodies to check as shell, bodies to scan for substitutions)."""
-    out, shell_bodies, sub_bodies = [], [], []
-    i, n, q, pending, line_start = 0, len(text), None, [], 0
-    while i < n:
-        c = text[i]
-        if q == "'":
-            q = None if c == "'" else q
-        elif c == "\\":
-            out.append(text[i:i + 2]); i += 2; continue
-        elif q == '"':
-            q = None if c == '"' else q
-        elif c in "'\"":
-            q = c
-        elif c == "\n" and pending:
-            out.append(c); i += 1
-            for delim, quoted, shell in pending:
-                body = []
-                while i < n:
-                    j = text.find("\n", i)
-                    j = n if j < 0 else j
-                    line, i = text[i:j], j + 1
-                    if line.strip() == delim:
-                        break
-                    body.append(line)
-                (shell_bodies if shell else ([] if quoted else sub_bodies)).append("\n".join(body))
-            pending, line_start = [], i
+def split_heredocs(text):
+    """Cut heredoc bodies out. Returns (text, bodies that feed a shell, unquoted non-shell bodies)."""
+    if "<<" not in text:
+        return text, [], []
+    lines, out, shell_b, sub_b, i = text.split("\n"), [], [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        ops = HEREDOC.findall(line)
+        if not ops:
             continue
-        elif text.startswith("<<<", i):
-            out.append("<<<"); i += 3; continue
-        elif text.startswith("<<", i):
-            m = HEREDOC.match(text, i)
-            if m:
-                shell = bool(SHELL_WORD.search(text[line_start:i]))
-                pending.append((m.group(3), bool(m.group(2)), shell))
-                out.append(text[i:m.end()]); i = m.end(); continue
-        elif c == "\n":
-            line_start = i + 1
-        out.append(c); i += 1
-    return "".join(out), shell_bodies, sub_bodies
+        j, found = i, []
+        for _dash, quote, delim in ops:
+            k = j
+            while k < len(lines) and lines[k].strip() != delim:
+                k += 1
+            if k >= len(lines):
+                found = None            # no terminator: not a heredoc, keep the lines as text
+                break
+            found.append((bool(quote), "\n".join(lines[j:k])))
+            j = k + 1
+        if found is None:
+            continue
+        i = j
+        is_shell = bool(SHELL_WORD.search(line))
+        for quoted, body in found:
+            if is_shell:
+                shell_b.append(body)
+            elif not quoted:
+                sub_b.append(body)      # unquoted heredocs still run $(...)
+    return "\n".join(out), shell_b, sub_b
 
-def scan(text, heredoc=False):
-    """Pull command substitutions out of text. Returns (text with them replaced, [bodies]).
-    Newlines outside quotes become ' ; '. Single quotes are inert; double quotes are not."""
-    out, subs, i, n = [], [], 0, len(text)
-    q = '"' if heredoc else None
+class Ctx:
+    __slots__ = ("kind", "buf", "q", "depth")
+    def __init__(self, kind, q=None):
+        self.kind, self.buf, self.q, self.depth = kind, [], q, 0
+
+def scan(text, literal=False):
+    """One linear pass. Returns (text with $(...)/backtick bodies replaced by a placeholder, [bodies]).
+    Single quotes are inert, double quotes are not. Comments are dropped, newlines outside quotes
+    become ' ; '. literal=True scans heredoc text: quotes never open."""
+    stack, bodies, i, n = [Ctx("root", '"' if literal else None)], [], 0, len(text)
+
+    def close():
+        c = stack.pop()
+        if c.q and not literal:
+            raise ParseError("unbalanced quote")
+        bodies.append("".join(c.buf))
+        stack[-1].buf.append(PLACEHOLDER)
+
     while i < n:
-        c = text[i]
+        m = SPECIAL.search(text, i)
+        cur = stack[-1]
+        if not m:
+            cur.buf.append(text[i:])
+            break
+        j = m.start()
+        if j > i:
+            cur.buf.append(text[i:j])
+        c, i, q = text[j], j + 1, cur.q
         if q == "'":
-            out.append(c)
-            q = None if c == "'" else q
-            i += 1; continue
-        if c == "\\":
-            if text[i + 1:i + 2] == "\n" and q is None:
-                out.append(" ")
+            cur.buf.append(c)
+            if c == "'":
+                cur.q = None
+        elif literal and c in "'\"":
+            cur.buf.append(c)
+        elif c == "\\":
+            nxt = text[i:i + 1]
+            i += 1 if nxt else 0
+            if nxt == "\n" and q is None:
+                cur.buf.append(" ")
+            elif nxt == "`" and cur.kind == "bt":
+                cur.buf.append("`")
             else:
-                out.append(text[i:i + 2])
-            i += 2; continue
-        if c == "$" and text[i + 1:i + 2] == "(":
-            body, i = grab_paren(text, i + 2)
-            subs.append(body); out.append("SUBST"); continue
-        if c == "`":
-            j = i + 1
-            while j < n and text[j] != "`":
-                j += 2 if text[j] == "\\" else 1
-            if j >= n:
-                raise ParseError("unbalanced backtick")
-            subs.append(text[i + 1:j].replace("\\`", "`")); out.append("SUBST"); i = j + 1; continue
-        if q is None:
-            if c in "<>" and text[i + 1:i + 2] == "(":
-                body, i = grab_paren(text, i + 2)
-                subs.append(body); out.append("SUBST"); continue
-            if c == "$" and text[i + 1:i + 2] in ("'", '"'):
-                i += 1; continue                      # $'..' and $".." quoting
-            if c in "'\"":
-                q = c
-            elif c == "\n":
-                out.append(" ; "); i += 1; continue
-        elif q == '"' and c == '"' and not heredoc:
-            q = None
-        out.append(c); i += 1
-    if q and not heredoc:
-        raise ParseError("unbalanced quote")
-    return "".join(out), subs
+                cur.buf.append("\\" + nxt)
+        elif c == "'":
+            cur.buf.append(c)
+            if q is None:
+                cur.q = "'"
+        elif c == '"':
+            cur.buf.append(c)
+            cur.q = '"' if q is None else None
+        elif c == "$":
+            nxt = text[i:i + 1]
+            if nxt == "(":
+                stack.append(Ctx("dollar")); i += 1
+            elif nxt in ("'", '"') and q is None:
+                pass                                    # $'..' / $".." quoting
+            else:
+                cur.buf.append(c)
+        elif c == "`":
+            if cur.kind == "bt":
+                close()
+            else:
+                stack.append(Ctx("bt"))
+        elif c in "<>" and q is None and text[i:i + 1] == "(":
+            stack.append(Ctx("proc")); i += 1
+        elif c == "(":
+            cur.buf.append(c)
+            if q is None:
+                cur.depth += 1
+        elif c == ")":
+            if q is None and cur.kind in ("dollar", "proc") and cur.depth == 0:
+                close()
+            else:
+                cur.buf.append(c)
+                if q is None:
+                    cur.depth = max(0, cur.depth - 1)
+        elif c == "#":
+            if q is None and (j == 0 or text[j - 1] in " \t\n;&|("):
+                k = text.find("\n", i)
+                i = n if k < 0 else k                   # comment: drop to end of line
+            else:
+                cur.buf.append(c)
+        elif c == "\n":
+            cur.buf.append(" ; " if q is None else c)
+        else:
+            cur.buf.append(c)                           # < or > not opening a process substitution
+    if len(stack) > 1 or (stack[0].q and not literal):
+        raise ParseError("unbalanced quote or substitution")
+    return "".join(stack[0].buf), bodies
 
 def tokenize(text):
     lex = shlex.shlex(text, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
-    lex.commenters = ""
-    try:
-        toks = list(lex)
-    except ValueError as ex:
-        raise ParseError(str(ex))
-    cmds, cur = [], []
+    lex.commenters = ""                                 # scan() already dropped comments
+    toks = list(lex)                                    # ValueError on unbalanced quotes
+    cmds, cur, at_start, skip_to = [], [], True, None
     for t in toks:
         if set(t) <= set(";&|()"):
-            cmds.append(cur); cur = []
+            if cur:
+                cmds.append(cur)
+            cur, at_start, skip_to = [], True, None
+        elif skip_to is not None:
+            if t == skip_to:
+                skip_to = None
+                at_start = True
+        elif at_start and t in KEYWORDS:
+            if t == "for":
+                skip_to, at_start = "do", False          # `for x in ...` header: skip to do
+                cur = []
+            elif t == "case":
+                skip_to, at_start = "in", False
+                cur = []
         else:
+            at_start = False
             cur.append(t)
-    cmds.append(cur)
-    return [c for c in cmds if c]
+    if cur:
+        cmds.append(cur)
+    return cmds
 
-def check(text, depth=0):
-    if depth > MAX_DEPTH:
-        raise ParseError("nested too deep")
-    main, shell_bodies, sub_bodies = strip_heredocs(text)
-    clean, subs = scan(main)
-    for b in sub_bodies:
-        subs += scan(b, heredoc=True)[1]
-    for cmd in tokenize(clean):
-        check_cmd(cmd, depth)
-    for s in subs + shell_bodies:
-        check(s, depth + 1)
-
-def check_cmd(toks, depth, wrap=True):
-    for t in toks:
-        if BYPASS_ENV.fullmatch(t):
-            bypass()
-        if t == "--no-verify":
-            bypass()
-    for k, t in enumerate(toks):
-        if t in ("-exec", "-execdir", "-ok", "-okdir"):
-            check_cmd(toks[k + 1:], depth)
-    i = 0
-    while i < len(toks) and ASSIGN.match(toks[i]):
-        i += 1
-    if i >= len(toks):
+def analyze(toks, work):
+    i, n = 0, len(toks)
+    while i < n:
+        a = ASSIGN.fullmatch(toks[i])
+        if a:
+            check_assignment(a.group(1), a.group(2)); i += 1; continue
+        w = os.path.basename(toks[i])
+        if w in WRAPPERS:
+            takes = WRAPPERS[w]
+            i += 1
+            while i < n and (toks[i].startswith("-") or (w == "timeout" and re.fullmatch(r"[0-9.]+[smhd]?", toks[i]))):
+                i += 2 if toks[i] in takes else 1
+                if w == "timeout" and i <= n and re.fullmatch(r"[0-9.]+[smhd]?", toks[i - 1]):
+                    break
+            if w == "timeout" and i < n and re.fullmatch(r"[0-9.]+[smhd]?", toks[i]):
+                i += 1
+            continue
+        break
+    if i >= n:
         return
-    w, rest = os.path.basename(toks[i]), toks[i + 1:]
+    word, rest = toks[i], toks[i + 1:]
+    if "$" in word or "`" in word or PLACEHOLDER in word:
+        block("command name is computed.", "write the command name literally.")
+    w = os.path.basename(word)
     if w == "git":
         check_git(rest)
     elif w == "eval":
-        check(" ".join(rest), depth + 1)
+        work.append(("text", " ".join(rest)))
     elif w in SHELLS:
         for k, a in enumerate(rest):
             if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
                 if k + 1 < len(rest):
-                    check(rest[k + 1], depth + 1)
+                    work.append(("text", rest[k + 1]))
                 break
-        if "<<<" in rest and rest.index("<<<") + 1 < len(rest):
-            check(rest[rest.index("<<<") + 1], depth + 1)
-    elif w in WRAPPERS and wrap:
-        for j in range(i + 1, len(toks)):
-            check_cmd(toks[j:], depth, wrap=False)
-            if w == "env" and re.search(r"\s", toks[j]):
-                check(toks[j], depth + 1)           # env -S "git ..."
+    elif w in DECLARE:
+        for a in rest:
+            m = ASSIGN.fullmatch(a)
+            if m:
+                check_assignment(m.group(1), m.group(2))
+    elif w == "find":
+        k = 0
+        while k < len(rest):
+            if rest[k] in ("-exec", "-execdir", "-ok", "-okdir"):
+                e = k + 1
+                while e < len(rest) and rest[e] not in (";", "+"):
+                    e += 1
+                analyze(rest[k + 1:e], work)            # one simple command per -exec, each token once
+                k = e
+            k += 1
 
 def shorts(args):
     return [a[1:] for a in args if a.startswith("-") and not a.startswith("--") and len(a) > 1]
@@ -239,14 +286,16 @@ def check_git(args):
     sub, A = args[i], args[i + 1:]
     if sub == "config" and any(a.lower().startswith(("core.hookspath", "alias.")) for a in A):
         bypass()
-    if sub in ("commit", "push", "merge", "rebase", "cherry-pick", "am", "revert"):
-        if any(a.startswith("--no-v") and "--no-verify".startswith(a.split("=", 1)[0]) for a in A):
-            bypass()
+    if sub in GIT_PUSHLIKE and any(a.startswith("--no-v") and "--no-verify".startswith(a.split("=", 1)[0]) for a in A):
+        bypass()
     if sub == "reset" and any(a.startswith("--ha") and "--hard".startswith(a) for a in A):
         block("git reset --hard throws away uncommitted work.", "commit first, or stop and ask the human.")
-    elif sub == "checkout" and ("--" in A or "." in A or has_short(A, "f") or any(long_is(a, "force") for a in A)):
-        block("git checkout -- / . / -f discards edits, including another agent's.",
-              "edit your own file back; leave others alone.")
+    elif sub == "checkout":
+        dd = A.index("--") if "--" in A else -1
+        has_ref = dd > 0 and any(not a.startswith("-") for a in A[:dd])
+        if ((dd >= 0 and not has_ref) or "." in A or has_short(A, "f") or any(long_is(a, "force") for a in A)):
+            block("git checkout -- / . / -f discards edits, including another agent's.",
+                  "edit your own file back; leave others alone.")
     elif sub == "switch" and (has_short(A, "f") or any(long_is(a, n) for a in A for n in ("force", "discard-changes"))):
         block("git switch -f discards edits, including another agent's.", "commit or stash-and-say first.")
     elif sub == "restore":
@@ -271,9 +320,8 @@ def check_git(args):
             elif a == "--":
                 break
             elif a.startswith("--"):
-                if "=" not in a and a.split("=")[0] in ("--message", "--file", "--author", "--date", "--template",
-                                                        "--cleanup", "--reuse-message", "--reedit-message",
-                                                        "--fixup", "--squash"):
+                if "=" not in a and a in ("--message", "--file", "--author", "--date", "--template", "--cleanup",
+                                          "--reuse-message", "--reedit-message", "--fixup", "--squash"):
                     skip = True
             elif a.startswith("-") and len(a) > 1:
                 for k, ch in enumerate(a[1:]):
@@ -288,6 +336,26 @@ def check_git(args):
             block("a plain force push can overwrite someone else's commits.",
                   "use --force-with-lease, only on your own branch.")
 
+def check(raw):
+    work, budget = collections.deque([("text", raw)]), 4 * len(raw) + 10000
+    while work:
+        kind, text = work.popleft()
+        budget -= len(text)
+        if budget < 0:
+            raise TimeoutError
+        if kind == "text":
+            text, shell_bodies, sub_bodies = split_heredocs(text)
+            text, bodies = scan(text)
+            for b in sub_bodies:
+                bodies += scan(b, literal=True)[1]
+            work.extend(("text", b) for b in shell_bodies)
+            work.extend(("body", b) for b in bodies)
+        for cmd in tokenize(text):
+            analyze(cmd, work)
+
+def on_alarm(*_):
+    raise TimeoutError
+
 def main():
     try:
         raw = json.load(sys.stdin)["tool_input"]["command"]
@@ -295,17 +363,26 @@ def main():
         return 0
     if not isinstance(raw, str) or not raw.strip():
         return 0
+    signal.signal(signal.SIGALRM, on_alarm)
+    signal.alarm(1)
     try:
         check(raw)
     except Block as b:
         print(f"BLOCKED by factory guardrails: {b.why}", file=sys.stderr)
         print(f"Instead: {b.instead}", file=sys.stderr)
         return 2
+    except (ParseError, ValueError):
+        print("BLOCKED by factory guardrails: could not parse the command.", file=sys.stderr)
+        print("Instead: could not parse; simplify the command.", file=sys.stderr)
+        return 2
+    except (TimeoutError, RecursionError):
+        print("BLOCKED by factory guardrails: command too complex to check.", file=sys.stderr)
+        print("Instead: too complex; split it into simpler commands.", file=sys.stderr)
+        return 2
     except Exception:
-        if "git" in raw.lower():
-            print("BLOCKED by factory guardrails: could not parse the command.", file=sys.stderr)
-            print("Instead: could not parse; simplify the command.", file=sys.stderr)
-            return 2
+        return 0                                        # a bug here must not wedge normal work
+    finally:
+        signal.alarm(0)
     return 0
 
 sys.exit(main())

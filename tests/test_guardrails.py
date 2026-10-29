@@ -15,7 +15,13 @@ BLOCK = [
     "git stash clear", "git config core.hooksPath /dev/null", "LEFTHOOK=0 git commit -m x",
     "git push --no-verify", "sudo -u bob git reset --hard", "bash <<EOF\ngit reset --hard\nEOF",
     "cat <<EOF\n$(git reset --hard)\nEOF", "git reset --ha", "git -c alias.x='reset --hard' x",
-    "git commit -m ok -n", "find . -exec git clean -fd {} ;", "( git reset --hard )",
+    "git commit -m ok -n", "git${IFS}reset --hard", "$(echo git) reset --hard",
+    "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\" git commit", "export GIT_CONFIG_COUNT=1",
+    "cat <<EOF | bash\ngit reset --hard\nEOF", "git checkout -- src/a.py", "export HUSKY=0",
+    "env GIT_CONFIG_KEY_0=core.hooksPath git commit", "timeout 5 git reset --hard", "time git clean -fd",
+    "xargs -I{} git reset --hard", "git commit -m 'unbalanced", "`git reset --hard`",
+    "for f in a; do git reset --hard; done", "if true; then git clean -fd; fi",
+    "find . -exec true {} + ; git reset --hard", "git am --no-verify x.patch", "find . -exec git clean -fd {} ;", "( git reset --hard )",
     "g''it reset --hard", "git reset $'--hard'",
 ]
 PASS = [
@@ -26,8 +32,26 @@ PASS = [
     'echo "git reset --hard is dangerous"', "git log --format='%H'", "git commit -m \"-n is fine\"",
     "git commit -am 'add -n flag'", "git diff | head", "git push origin main", "git checkout main",
     "git stash", "git stash pop", "git switch main", "git -C /tmp/r status",
-    "git commit -m \"$(date)\"", "cat <<'EOF'\n$(git reset --hard)\nEOF",
+    "git commit -m \"$(date)\"",
+    "git commit -m \"$(cat <<'EOF'\nfix: don't crash (really)\nEOF\n)\"",
+    "gh pr create --body \"$(cat <<'EOF'\nit's (really) done\nEOF\n)\"",
+    "grep -- --no-verify README.md", "rg -e --no-verify .", "ls # it's a comment with git",
+    "for f in a b; do echo git push --force; done", "if true; then echo git reset --hard; fi",
+    "git checkout feature -- src/a.py", "npm test -- --no-verify-something", "git log --oneline | head -5",
+    "cd /tmp && git status", "echo $HOME", "ls $(pwd)", "git diff $(git merge-base HEAD main)",
+    "git commit -m \"msg\" 2>&1 | tail -3", "python3 -c 'print(1)'", "x=1; echo $x", "cat <<'EOF'\n$(git reset --hard)\nEOF",
 ]
+
+
+def timed(cmd):
+    import time
+    best = 9
+    for _ in range(3):
+        t = time.perf_counter()
+        r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"tool_input": {"command": cmd}}),
+                           capture_output=True, text=True)
+        best = min(best, time.perf_counter() - t)
+    return r.returncode, best
 
 
 def run(cmd):
@@ -46,6 +70,19 @@ class T(unittest.TestCase):
         for c in PASS:
             with self.subTest(c=c):
                 self.assertEqual(run(c), 0)
+
+    def test_perf(self):
+        import random, string
+        random.seed(1)
+        rnd = " ".join("".join(random.choices(string.ascii_lowercase, k=random.randint(2, 9))) for _ in range(7000))[:50000]
+        cases = [("find . " + "-exec x {} + " * 40 + "; git reset --hard", 2),
+                 ("time " + "a " * 10000, 0), (rnd, 0), ("x " + "$(a " * 300 + ")" * 300, 0),
+                 ("echo " + "(" * 2000, 0)]
+        for cmd, want in cases:
+            code, secs = timed(cmd)
+            print(f"perf {len(cmd)}B exit={code} {secs * 1000:.0f}ms")
+            self.assertEqual(code, want, cmd[:40])
+            self.assertLess(secs, 0.1, cmd[:40])
 
     def test_malformed_input(self):
         for stdin in ["", "not json", "{}", '{"tool_input":{"command":5}}']:

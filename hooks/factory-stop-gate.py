@@ -31,6 +31,10 @@ except Exception:
 if not job:
     sys.exit(0)
 
+if job.tampered:
+    block(f"Job binding tampered: the binding index for job {job} and its .factory-job file disagree. "
+          "Stop and tell the human; do not edit either.")
+
 section = msg.split("claims:", 1)[1]
 section = re.split(r"\n\s*(unverified|asks|friction|details):", section)[0]
 claims = [l.strip() for l in section.splitlines() if l.strip()]
