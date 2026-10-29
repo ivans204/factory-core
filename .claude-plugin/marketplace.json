@@ -1,0 +1,7 @@
+{
+  "name": "factory-core",
+  "owner": { "name": "ivans204" },
+  "plugins": [
+    { "name": "factory", "source": "./", "description": "Software factory core: contract, guardrail and evidence hooks, templates." }
+  ]
+}
