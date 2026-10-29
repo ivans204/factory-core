@@ -8,7 +8,8 @@ Extracted templates/roster live in `templates/`; full cookbook text was in a ses
   - Verified by orchestrator: 3 test files pass; 18/18 must-block, 10/10 must-pass spot checks; refuter corpus of 104 realistic commands → 0 false positives.
 - **R0 done**: friction report (session scratchpad, not kept). Top: manual commit/push/deploy (21), rejected/broken output (16), continuity (~19), wrong approach (7), interrupts (9).
 - **R3 written 2026-10-29**: `agents/scribe.md` (haiku) and `agents/shipwright.md` (sonnet) as `factory:scribe`, `factory:shipwright`; test_agents.py. Real-use proof (merge, push, draft PR via Shipwright) still pending.
-- **Nothing installed or registered.** Plugin not enabled, no settings.json change, no deny rules, no sandbox.
+- Plugin `factory@factory-core` installed at user scope; sandbox + deny rules on (see "Enabled" below).
+- Guardrails now have factory-agent-only rules (keyed on hook `agent_type`): no `gh pr merge`, add-label, resolveReviewThread, branch rename, or push to main/master.
 
 ## Decisions (and why)
 - Repo at `~/orca/factory-core`, shipped as a plugin (`factory:<role>`) so the user's existing agents (scout, builder, refuter, researcher, debugger) stay untouched.

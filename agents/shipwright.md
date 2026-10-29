@@ -12,16 +12,16 @@ Read in order: ~/orca/factory-core/knowledge/contract.md, the recipe, the profil
 ## Modes
 ### merge-master
 1. Fetch, then merge `repo.default_branch` into the branch.
-2. Resolve mechanical conflicts yourself; a semantic conflict goes back under `asks:` with options.
+2. Resolve mechanical conflicts yourself. On a semantic conflict run `git merge --abort`, return `result: blocked` with the conflicting files and options under `asks:`.
 3. Run `checks.commit_gate` as the commit does; fix only what it reports.
 Done when the merge commit exists, the gate passed, and `git status` is clean.
 
 ### push
-1. Push the current branch. Only `--force-with-lease`, only on your own branch, and only when the history was rewritten.
+1. If the current branch is `repo.default_branch`, return `result: blocked` and push nothing. Otherwise push the current branch. Only `--force-with-lease`, only on your own branch, and only when the history was rewritten.
 Done when the push output shows the remote updated to the local HEAD.
 
 ### open-pr
-1. Open as `pr.open_as` with the title per `pr.title`; body per `pr.rules`.
+1. If the current branch is `repo.default_branch`, return `result: blocked` and open nothing. Otherwise open as `pr.open_as` with the title per `pr.title`; body per `pr.rules`.
 2. Add a Testing section that cites receipts and meets `pr.testing_proof`.
 Done when the PR URL exists, is in the requested state, and the body has a Testing section.
 

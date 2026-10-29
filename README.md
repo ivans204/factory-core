@@ -2,7 +2,7 @@
 
 Claude Code plugin skeleton (name `factory`, v0.1.0): the factory contract, git guardrails, receipt hooks, and templates.
 
-**Nothing is installed or registered yet.** Two agents (scribe, shipwright) exist; no skills; no settings, symlinks, or hooks were touched.
+Plugin `factory@factory-core` is installed at user scope; sandbox and deny rules are on (see HANDOFF "Enabled"). Two agents (scribe, shipwright) exist; no skills.
 
 ## Layout
 - `.claude-plugin/plugin.json` plugin manifest

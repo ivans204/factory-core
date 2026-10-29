@@ -47,8 +47,8 @@ veto; autopilot: escalations and the end only). Rule 5 applies to guided only.
 4. No charter yet: `scout` research for the facts first, then grill the
    human in rounds (frontier only, recommendation first) until the goal, the
    acceptance criteria with their proof, out of scope, decided-in-advance,
-   always-ask, autonomy and stop rules are settled. Write charter.md through
-   scribe. Bind every worktree by writing the slug to `<worktree>/.factory-job`
+   always-ask, autonomy and stop rules are settled. You write charter.md
+   yourself from the human's answers (Scribe does not). Bind every worktree by writing the slug to `<worktree>/.factory-job`
    (listed in .git/info/exclude) so the receipt hooks find the job.
 
 ## 2. Route the message

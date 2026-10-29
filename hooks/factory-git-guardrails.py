@@ -7,7 +7,13 @@
 # NOT a shell parser and NOT a security boundary (that is the sandbox's job).
 # One linear pass: heredoc bodies out, then $(...)/backtick bodies out, then
 # shlex tokens split into simple commands. Every body is checked exactly once.
-import collections, json, os, re, shlex, signal, sys
+import collections, json, os, pathlib, re, shlex, signal, subprocess, sys
+
+FACTORY = False          # set in main(): the caller is a factory role (shipwright, scribe, ...)
+CWD = None
+FACTORY_MSG = ("factory agents never merge, label, resolve threads, rename branches or push the default branch.",
+               "return it as asks:.")
+DEFAULT_BRANCHES = {"main", "master"}
 
 class Block(Exception):
     def __init__(self, why, instead):
@@ -39,6 +45,62 @@ GIT_PUSHLIKE = {"commit", "push", "merge", "rebase", "am", "cherry-pick"}
 
 def block(why, instead):
     raise Block(why, instead)
+
+def factory_block():
+    block(*FACTORY_MSG)
+
+def factory_role(agent_type):
+    """True when agent_type names a role defined in agents/*.md, with or without a `factory:` prefix."""
+    if not isinstance(agent_type, str) or not agent_type:
+        return False
+    name = agent_type[len("factory:"):] if agent_type.startswith("factory:") else agent_type
+    try:
+        d = pathlib.Path(__file__).resolve().parent.parent / "agents"
+        return name in {f.stem for f in d.glob("*.md")}
+    except OSError:
+        return False
+
+def current_branch(cwd):
+    try:
+        r = subprocess.run(["git", "-C", cwd or ".", "rev-parse", "--abbrev-ref", "HEAD"],
+                           capture_output=True, text=True, timeout=0.3)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None                                     # failure = skip
+
+def check_gh(args):
+    pos, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in ("-R", "--repo"):
+            skip = True
+        elif not a.startswith("-"):
+            pos.append(a)
+    if pos[:2] == ["pr", "merge"]:
+        factory_block()
+    if pos[:2] == ["pr", "edit"] and any(a.startswith("--add-label") for a in args):
+        factory_block()
+    if pos[:2] == ["api", "graphql"] and any("resolvereviewthread" in a.lower() for a in args):
+        factory_block()
+
+def check_factory_push(A, cwd):
+    pos, skip = [], False
+    for a in A:
+        if skip:
+            skip = False
+        elif a in ("--repo", "-o", "--push-option", "--receive-pack", "--exec"):
+            skip = True
+        elif not a.startswith("-"):
+            pos.append(a)
+    refs = pos[1:]
+    dsts = [r.lstrip("+").split(":")[-1].removeprefix("refs/heads/") for r in refs]
+    for d in dsts:
+        if d in DEFAULT_BRANCHES:
+            factory_block()
+    if not refs or "HEAD" in dsts:
+        if current_branch(cwd) in DEFAULT_BRANCHES:
+            factory_block()
 
 def bypass():
     block("commit and push gates are not bypassed by agents.",
@@ -243,6 +305,8 @@ def analyze(toks, work):
     w = os.path.basename(word)
     if w == "git":
         check_git(rest)
+    elif w == "gh" and FACTORY:
+        check_gh(rest)
     elif w == "eval":
         work.append(("text", " ".join(rest)))
         here_string(rest, work)
@@ -285,10 +349,12 @@ def long_is(a, name):
     return a.split("=", 1)[0] == "--" + name
 
 def check_git(args):
-    i, cfg = 0, []
+    i, cfg, cwd = 0, [], CWD
     while i < len(args):
         a = args[i]
-        if a in ("-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"):
+        if a == "-C" and i + 1 < len(args):
+            cwd = os.path.join(cwd or "", args[i + 1]); i += 2
+        elif a in ("-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"):
             i += 2
         elif a == "--config-env":
             cfg.append(args[i + 1] if i + 1 < len(args) else ""); i += 2
@@ -320,7 +386,8 @@ def check_git(args):
     elif sub == "checkout":
         dd = A.index("--") if "--" in A else -1
         has_ref = dd > 0 and any(not a.startswith("-") for a in A[:dd])
-        if ((dd >= 0 and not has_ref) or "." in A or has_short(A, "f") or any(long_is(a, "force") for a in A)):
+        side = any(a in ("--ours", "--theirs") for a in A) and 0 <= dd < len(A) - 1   # conflict resolution
+        if ((dd >= 0 and not has_ref and not side) or "." in A or has_short(A, "f") or any(long_is(a, "force") for a in A)):
             block("git checkout -- / . / -f discards edits, including another agent's.",
                   "edit your own file back; leave others alone.")
     elif sub == "switch" and (has_short(A, "f") or any(long_is(a, n) for a in A for n in ("force", "discard-changes"))):
@@ -337,6 +404,8 @@ def check_git(args):
         delete = has_short(A, "d") or any(long_is(a, "delete") for a in A)
         if has_short(A, "D") or (delete and force):
             block("git branch -D deletes unmerged work.", "ask, or use -d for a merged branch.")
+        if FACTORY and (has_short(A, "m") or has_short(A, "M") or any(long_is(a, "move") for a in A)):
+            factory_block()
     elif sub == "stash" and [a for a in A if not a.startswith("-")][:1] in (["drop"], ["clear"]):
         block("stash drop/clear deletes stashed work.", "keep it and say it exists.")
     elif sub == "commit":
@@ -358,6 +427,8 @@ def check_git(args):
                         skip = k == len(a) - 2
                         break
     elif sub == "push":
+        if FACTORY:
+            check_factory_push(A, cwd)
         if (has_short(A, "f") or any(long_is(a, "force") for a in A)
                 or any(a.startswith("+") and len(a) > 1 for a in A)):
             block("a plain force push can overwrite someone else's commits.",
@@ -384,14 +455,23 @@ def on_alarm(*_):
     raise TimeoutError
 
 def main():
+    global FACTORY, CWD
     try:
-        raw = json.load(sys.stdin)["tool_input"]["command"]
+        payload = json.load(sys.stdin)
+        raw = payload["tool_input"]["command"]
     except Exception:
         return 0
+    if isinstance(payload.get("agent_type"), str):
+        FACTORY = factory_role(payload["agent_type"])
+    CWD = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
     if not isinstance(raw, str) or not raw.strip():
         return 0
     flat = re.sub(r"""['"\\]""", "", raw).lower()
-    if not NEEDS_SCAN.search(flat):
+    if FACTORY and re.search(r"\bgh\b", flat) and "resolvereviewthread" in flat:
+        print(f"BLOCKED by factory guardrails: {FACTORY_MSG[0]}", file=sys.stderr)
+        print(f"Instead: {FACTORY_MSG[1]}", file=sys.stderr)
+        return 2
+    if not (NEEDS_SCAN.search(flat) or (FACTORY and re.search(r"\bgh\b", flat))):
         return 0                                        # nothing git-like or shell-like: skip the deep scan
     signal.signal(signal.SIGALRM, on_alarm)
     signal.alarm(1)

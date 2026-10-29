@@ -60,10 +60,27 @@ def timed(cmd):
     return r.returncode, best
 
 
-def run(cmd):
-    r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"tool_input": {"command": cmd}}),
-                       capture_output=True, text=True)
+def run(cmd, agent=None, cwd=None):
+    p = {"tool_input": {"command": cmd}}
+    if agent:
+        p["agent_type"] = agent
+    if cwd:
+        p["cwd"] = cwd
+    r = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(p), capture_output=True, text=True)
     return r.returncode
+
+
+FACTORY_BLOCK = [
+    "gh pr merge 5 --squash", "gh -R o/r pr merge", "gh pr edit 5 --add-label ready", "gh pr edit --add-label=x",
+    "gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:\"x\"}) { clientMutationId } }'",
+    "gh api graphql -F query=@- <<'EOF'\nmutation { resolveReviewThread(input:{}) {x} }\nEOF",
+    "git branch -m new", "git branch -M new", "git branch --move a b", "git push origin main", "git push -u origin main",
+    "git push origin master", "git push origin HEAD:main", "git push origin HEAD:refs/heads/master",
+    "git push origin +main", "git push origin feat:main",
+]
+FACTORY_PASS = ["git push origin feat", "git push -u origin feat", "git push --force-with-lease origin feat",
+                "git push origin HEAD:feat", "gh pr create --draft", "gh pr view 5", "gh pr edit 5 --title x",
+                "gh api graphql -f query='{ viewer { login } }'", "git branch -d x", "git branch feat"]
 
 
 class T(unittest.TestCase):
@@ -76,6 +93,44 @@ class T(unittest.TestCase):
         for c in PASS:
             with self.subTest(c=c):
                 self.assertEqual(run(c), 0)
+
+    def test_factory_agents(self):
+        for agent in ("factory:shipwright", "shipwright", "factory:scribe"):
+            for c in FACTORY_BLOCK:
+                with self.subTest(a=agent, c=c):
+                    if c.startswith("git push origin +main"):
+                        continue                       # blocked for everyone already
+                    self.assertEqual(run(c, agent), 2)
+            for c in FACTORY_PASS:
+                with self.subTest(a=agent, c=c):
+                    self.assertEqual(run(c, agent), 0)
+
+    def test_non_factory_unaffected(self):
+        for agent in (None, "builder", "factory:builder", "", "factory:"):
+            for c in FACTORY_BLOCK:
+                if c.startswith("git push origin +main"):
+                    continue
+                with self.subTest(a=agent, c=c):
+                    self.assertEqual(run(c, agent), 0)
+
+    def test_factory_plain_push_on_main(self):
+        import tempfile
+        for br, want in (("main", 2), ("feat", 0)):
+            with tempfile.TemporaryDirectory() as d:
+                subprocess.run(["git", "init", "-q", "-b", br, d], check=True)
+                subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                                "--allow-empty", "-m", "x"], check=True)
+                self.assertEqual(run("git push", "factory:shipwright", d), want, br)
+                self.assertEqual(run("git push origin", "shipwright", d), want, br)
+                self.assertEqual(run("git push origin HEAD", "shipwright", d), want, br)
+                self.assertEqual(run("git push", None, d), 0, br)
+                self.assertEqual(run("git push", "shipwright", d + "/nope"), 0)   # rev-parse fails -> skip
+
+    def test_checkout_sides(self):
+        for c in ("git checkout --theirs -- src/a.py", "git checkout --ours -- src/a.py", "git checkout --ours -- a b"):
+            self.assertEqual(run(c), 0, c)
+        for c in ("git checkout -- src/a.py", "git checkout --theirs --", "git checkout --ours ."):
+            self.assertEqual(run(c), 2, c)
 
     def test_perf(self):
         import random, string
