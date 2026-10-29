@@ -1,0 +1,5 @@
+{
+  "name": "factory",
+  "version": "0.1.0",
+  "description": "Agent factory core: contract, git guardrails, receipt hooks, and templates."
+}
