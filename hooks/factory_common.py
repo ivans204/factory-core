@@ -38,25 +38,28 @@ def job_of(cwd):
     .factory-job file must agree. Without an index entry, fall back to the nearest .factory-job."""
     if not isinstance(cwd, str):
         return None
-    try:
-        p = pathlib.Path(cwd).resolve()
-        idx = load_index()
-        if idx is None:
-            return _marked("tampered-index", True)
-        for d in [p, *p.parents]:
-            slug = idx.get(str(d))
-            if slug is not None:
-                if not SLUG.fullmatch(slug):
-                    return _marked("tampered-index", True)
+    p = pathlib.Path(cwd).resolve()
+    idx = load_index()
+    if idx is None:
+        return _marked("tampered-index", True)
+    for d in [p, *p.parents]:
+        slug = idx.get(str(d))
+        if slug is not None:
+            if not SLUG.fullmatch(slug):
+                return _marked("tampered-index", True)
+            try:
                 f = d / ".factory-job"
                 ok = f.is_file() and f.read_text().strip() == slug
-                return _marked(slug, not ok)
+            except Exception:
+                ok = False                       # unreadable or undecodable: treat as tampered
+            return _marked(slug, not ok)
+    try:
         for d in [p, *p.parents]:
             f = d / ".factory-job"
             if f.is_file():
                 slug = f.read_text().strip()
                 return _marked(slug, False) if SLUG.fullmatch(slug) else None
-    except OSError:
+    except (OSError, ValueError):
         return None
     return None
 

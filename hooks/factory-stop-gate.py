@@ -22,11 +22,21 @@ try:
     msg = e.get("last_assistant_message") or ""
     if not isinstance(msg, str) or "claims:" not in msg:
         sys.exit(0)                     # nothing claimed (Scribe), nothing to check
-    job = fc.job_of(e.get("cwd", "."))
     agent, run = fc.agent_run(e)
 except SystemExit:
     raise
 except Exception:
+    sys.exit(0)
+try:
+    job = fc.job_of(e.get("cwd", "."))
+except Exception:
+    try:
+        bound = fc.index_path().exists()
+    except Exception:
+        bound = False
+    if bound:
+        block("Job binding could not be read: the binding index exists but the job lookup failed. "
+              "Stop and tell the human.")
     sys.exit(0)
 if not job:
     sys.exit(0)

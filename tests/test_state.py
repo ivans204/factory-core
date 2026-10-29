@@ -26,6 +26,11 @@ class Guard(unittest.TestCase):
                          ("Write", {"file_path": "/h/.brain/job/j/relay/receipts/x.jsonl", "content": "x"}),
                          ("Grep", {"pattern": "x", "path": "/h/.brain/job/j/relay/receipts"}),
                          ("Glob", {"pattern": "/h/.config/factory/*"}),
+                         ("Bash", {"command": "cat ~/.con\"\"fig/fac\"\"tory/x"}),
+                         ("Bash", {"command": "cat ~/.Config/Factory/x"}),
+                         ("Read", {"file_path": "~/.Config/Factory/receipt.key"}),
+                         ("Bash", {"command": "printf x >| .factory-job"}),
+                         ("Bash", {"command": "cat a && rm .factory-job"}),
                          ("Bash", {"command": "rm .factory-job"}), ("Bash", {"command": "echo x > .factory-job"}),
                          ("Bash", {"command": "sed -i s/a/b/ .factory-job"}),
                          ("Bash", {"command": "echo x | tee ../.factory-job"}),
@@ -35,7 +40,15 @@ class Guard(unittest.TestCase):
                 self.assertEqual(guard(tool, **ti), 2)
 
     def test_allowed(self):
-        for tool, ti in [("Read", {"file_path": "/w/.factory-job"}), ("Bash", {"command": "cat .factory-job"}),
+        for tool, ti in [("Read", {"file_path": "/w/.factory-job"}),
+                         ("Grep", {"pattern": "receipt.key", "path": "./hooks"}),
+                         ("Grep", {"pattern": "relay/receipts"}),
+                         ("Read", {"file_path": "/w/docs/relay/receipts.md"}),
+                         ("Bash", {"command": "cat .factory-job && npm install"}),
+                         ("Bash", {"command": "cat .factory-job | tee /dev/stderr"}),
+                         ("Bash", {"command": "ls .factory-job && cp a b"}),
+                         ("Bash", {"command": "grep -rn receipt.key hooks/"}),
+                         ("Bash", {"command": "git log -- relay/receipts"}), ("Bash", {"command": "cat .factory-job"}),
                          ("Bash", {"command": "cat .factory-job 2>/dev/null"}),
                          ("Edit", {"file_path": "/w/src/a.py", "old_string": "a", "new_string": "b"}),
                          ("Write", {"file_path": "/w/README.md", "content": "~/.config/factory is protected"}),
@@ -43,6 +56,11 @@ class Guard(unittest.TestCase):
                          ("Glob", {"pattern": "**/*.py"})]:
             with self.subTest(tool=tool, ti=ti):
                 self.assertEqual(guard(tool, **ti), 0)
+
+    def test_flat_path_alone(self):
+        # no literal marker anywhere: only the quote-stripped text contains it
+        self.assertEqual(guard("Bash", command='cat ~/.con""fig/fac""tory/x'), 2)
+        self.assertEqual(guard("Bash", command="cat ~/.con\\fig/fac\\tory/x"), 2)
 
     def test_malformed(self):
         for s in ["", "junk", "{}", '{"tool_name":"Bash","tool_input":5}']:
@@ -103,6 +121,11 @@ class Binding(unittest.TestCase):
         self.assertFalse((self.wt / ".factory-job").exists())
         self.assertEqual(json.loads((self.home / ".config/factory/bindings.json").read_text()), {})
         self.assertEqual(self.gate().stdout, "")
+
+    def test_unreadable_job_file_is_tampered(self):
+        self.bind(str(self.wt), "job-9")
+        (self.wt / ".factory-job").write_bytes(b"\xff\xfe\x00bad")
+        self.assertIn("tampered", json.loads(self.gate().stdout)["reason"])
 
     def test_corrupt_index_is_tampered(self):
         self.bind(str(self.wt), "job-9")

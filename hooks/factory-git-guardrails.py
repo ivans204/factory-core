@@ -31,6 +31,10 @@ SHELL_WORD = re.compile(r"""(^|[\s;&|(`"'])(\S*/)?(bash|sh|zsh|eval|source|\.)(\
 HEREDOC = re.compile(r"""(?<!<)<<(?!<)(-?)\s*(['"]?)([A-Za-z0-9_.\-]+)\2""")
 SPECIAL = re.compile(r"""[\\'"$`()#\n<>]""")
 PLACEHOLDER = "@@SUBST@@"
+DURATION = re.compile(r"[0-9.]+[smhd]?")
+GIT_SUBS = {"reset", "checkout", "switch", "restore", "clean", "branch", "stash", "commit", "push", "merge",
+            "rebase", "am", "cherry-pick", "config"}
+NEEDS_SCAN = re.compile(r"git|husky|lefthook|git_config|(^|\W)(bash|sh|zsh|dash|ksh|eval|source)(\W|$)")
 GIT_PUSHLIKE = {"commit", "push", "merge", "rebase", "am", "cherry-pick"}
 
 def block(why, instead):
@@ -205,33 +209,52 @@ def analyze(toks, work):
         if a:
             check_assignment(a.group(1), a.group(2)); i += 1; continue
         w = os.path.basename(toks[i])
-        if w in WRAPPERS:
-            takes = WRAPPERS[w]
-            i += 1
-            while i < n and (toks[i].startswith("-") or (w == "timeout" and re.fullmatch(r"[0-9.]+[smhd]?", toks[i]))):
-                i += 2 if toks[i] in takes else 1
-                if w == "timeout" and i <= n and re.fullmatch(r"[0-9.]+[smhd]?", toks[i - 1]):
-                    break
-            if w == "timeout" and i < n and re.fullmatch(r"[0-9.]+[smhd]?", toks[i]):
+        if w not in WRAPPERS:
+            break
+        takes, i = WRAPPERS[w], i + 1
+        while i < n:
+            t = toks[i]
+            if w == "env" and t in ("-S", "--split-string"):
+                if i + 1 < n:
+                    work.append(("text", toks[i + 1]))     # env -S "git ..."
+                i += 2
+            elif w == "env" and t.startswith("--split-string="):
+                work.append(("text", t.split("=", 1)[1])); i += 1
+            elif w == "env" and t.startswith("-S") and len(t) > 2:
+                work.append(("text", t[2:])); i += 1
+            elif w == "timeout" and DURATION.fullmatch(t):
                 i += 1
-            continue
-        break
+                break
+            elif t.startswith("-"):
+                i += 2 if t in takes else 1
+            elif w == "env" and ASSIGN.fullmatch(t):
+                m = ASSIGN.fullmatch(t)
+                check_assignment(m.group(1), m.group(2)); i += 1
+            else:
+                break
     if i >= n:
         return
     word, rest = toks[i], toks[i + 1:]
     if "$" in word or "`" in word or PLACEHOLDER in word:
-        block("command name is computed.", "write the command name literally.")
+        parts = set(re.split(r"[^A-Za-z-]+", word))
+        if (GIT_SUBS & set(rest) or any("--no-verify" in t or "hookspath" in t.lower() for t in rest)
+                or ("git" in parts and GIT_SUBS & parts)):
+            block("command name is computed.", "write the command name literally.")
     w = os.path.basename(word)
     if w == "git":
         check_git(rest)
     elif w == "eval":
         work.append(("text", " ".join(rest)))
+        here_string(rest, work)
     elif w in SHELLS:
         for k, a in enumerate(rest):
             if a.startswith("-") and not a.startswith("--") and "c" in a[1:]:
                 if k + 1 < len(rest):
                     work.append(("text", rest[k + 1]))
                 break
+        here_string(rest, work)
+    elif w in ("source", "."):
+        here_string(rest, work)
     elif w in DECLARE:
         for a in rest:
             m = ASSIGN.fullmatch(a)
@@ -247,6 +270,10 @@ def analyze(toks, work):
                 analyze(rest[k + 1:e], work)            # one simple command per -exec, each token once
                 k = e
             k += 1
+
+def here_string(rest, work):
+    if "<<<" in rest and rest.index("<<<") + 1 < len(rest):
+        work.append(("text", rest[rest.index("<<<") + 1]))
 
 def shorts(args):
     return [a[1:] for a in args if a.startswith("-") and not a.startswith("--") and len(a) > 1]
@@ -363,6 +390,9 @@ def main():
         return 0
     if not isinstance(raw, str) or not raw.strip():
         return 0
+    flat = re.sub(r"""['"\\]""", "", raw).lower()
+    if not NEEDS_SCAN.search(flat):
+        return 0                                        # nothing git-like or shell-like: skip the deep scan
     signal.signal(signal.SIGALRM, on_alarm)
     signal.alarm(1)
     try:
@@ -380,7 +410,11 @@ def main():
         print("Instead: too complex; split it into simpler commands.", file=sys.stderr)
         return 2
     except Exception:
-        return 0                                        # a bug here must not wedge normal work
+        if "git" in raw.lower():
+            print("BLOCKED by factory guardrails: guardrail error.", file=sys.stderr)
+            print("Instead: simplify the command, or ask the human.", file=sys.stderr)
+            return 2
+        return 0
     finally:
         signal.alarm(0)
     return 0

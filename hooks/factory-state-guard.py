@@ -5,12 +5,16 @@
 # and the sandbox for that). Malformed input: exit 0.
 import json, os, pathlib, re, sys
 
-MARKERS = (".config/factory", "relay/receipts", "receipt.key")
+# Path arguments: path-segment matches, case-insensitive (macOS volumes are).
+PATH_MARKERS = re.compile(r"(^|/)\.config/factory(/|$)|(^|/)relay/receipts(/|$)|(^|/)receipt\.key$", re.I)
+# Bash text: the same idea, but anywhere in the command.
+BASH_MARKERS = re.compile(r"\.config/factory(?![\w-])|/relay/receipts(/|\s|$|['\"])|/receipt\.key", re.I)
+PATH_KEYS = {"Grep": ("path", "glob"), "Glob": ("pattern", "path")}
+DEFAULT_KEYS = ("file_path", "path", "notebook_path")
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-PATH_KEYS = ("file_path", "path", "notebook_path", "pattern")
-BASH_WRITE = re.compile(
-    r"(>>?\s*\S*\.factory-job|\b(rm|mv|cp|tee|truncate|unlink|shred|dd|install|ln)\b"
-    r"|\bsed\b[^|;&\n]*\s-[a-zA-Z]*i|\bperl\b[^|;&\n]*\s-[a-zA-Z]*i)")
+JOB_REDIRECT = re.compile(r">>?\s*\S*\.factory-job")
+JOB_VERB = re.compile(r"\b(rm|mv|cp|tee|truncate|unlink|shred|dd|install|ln)\b"
+                      r"|\b(sed|perl)\b[^|;&\n]*\s-[a-zA-Z]*i")
 
 
 def denied(why):
@@ -19,10 +23,16 @@ def denied(why):
     sys.exit(2)
 
 
-def marked(s):
-    # also look at the text with quotes and backslashes removed (.config/fac""tory)
-    flat = re.sub(r"""['"\\]""", "", s)
-    return any(m in s or m in flat for m in MARKERS)
+def bash_text(cmd):
+    # also look at the text with quotes and backslashes removed (.con""fig/fac""tory)
+    flat = re.sub(r"""['"\\]""", "", cmd)
+    if BASH_MARKERS.search(cmd) or BASH_MARKERS.search(flat):
+        denied("the command references factory state (~/.config/factory or relay/receipts).")
+    if ".factory-job" in cmd:
+        # a write verb or redirect only counts inside the simple command that names .factory-job
+        for seg in re.split(r"&&|\|\||[;|&\n]", cmd.replace(">|", ">")):
+            if ".factory-job" in seg and (JOB_REDIRECT.search(seg) or JOB_VERB.search(seg)):
+                denied("the command modifies .factory-job.")
 
 
 def main():
@@ -31,22 +41,17 @@ def main():
     if not isinstance(ti, dict):
         return
     if tool == "Bash":
-        cmd = ti.get("command")
-        if not isinstance(cmd, str):
-            return
-        if marked(cmd):
-            denied("the command references factory state (~/.config/factory or relay/receipts).")
-        if ".factory-job" in cmd and BASH_WRITE.search(cmd):
-            denied("the command modifies .factory-job.")
+        if isinstance(ti.get("command"), str):
+            bash_text(ti["command"])
         return
-    for k in PATH_KEYS:
+    for k in PATH_KEYS.get(tool, DEFAULT_KEYS):
         v = ti.get(k)
         if not isinstance(v, str):
             continue
         cands = {v}
         if k != "pattern":
             cands.add(os.path.realpath(os.path.expanduser(v)))
-        if any(marked(c) for c in cands):
+        if any(PATH_MARKERS.search(c) for c in cands):
             denied(f"{k} points into factory state.")
         if tool in WRITE_TOOLS and pathlib.PurePath(v).name == ".factory-job":
             denied(".factory-job is bound by the harness, not edited by agents.")

@@ -15,7 +15,9 @@ BLOCK = [
     "git stash clear", "git config core.hooksPath /dev/null", "LEFTHOOK=0 git commit -m x",
     "git push --no-verify", "sudo -u bob git reset --hard", "bash <<EOF\ngit reset --hard\nEOF",
     "cat <<EOF\n$(git reset --hard)\nEOF", "git reset --ha", "git -c alias.x='reset --hard' x",
-    "git commit -m ok -n", "git${IFS}reset --hard", "$(echo git) reset --hard",
+    "git commit -m ok -n", 'env -S "git reset --hard"', "env --split-string='git clean -fd'",
+    "env -Sgit\\ reset\\ --hard", "bash <<< 'git reset --hard'", "eval <<< 'git clean -fd'",
+    "source <<< 'git reset --hard'", "${GIT:-git} reset --hard", "$GIT checkout -f", "git${IFS}reset --hard", "$(echo git) reset --hard",
     "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\" git commit", "export GIT_CONFIG_COUNT=1",
     "cat <<EOF | bash\ngit reset --hard\nEOF", "git checkout -- src/a.py", "export HUSKY=0",
     "env GIT_CONFIG_KEY_0=core.hooksPath git commit", "timeout 5 git reset --hard", "time git clean -fd",
@@ -33,6 +35,10 @@ PASS = [
     "git commit -am 'add -n flag'", "git diff | head", "git push origin main", "git checkout main",
     "git stash", "git stash pop", "git switch main", "git -C /tmp/r status",
     "git commit -m \"$(date)\"",
+    "$HOME/bin/tool --version", '"$(pwd)/scripts/run.sh" arg', "$HOME/.local/bin/uv sync", '"$PYTHON" -m pytest',
+    "${EDITOR:-vi} --version", "$(npm bin)/eslint .", "`which python3` --version", '"$HOME/bin/tool" x',
+    '"${HOME}"/bin/x', '"$(git rev-parse --show-toplevel)/scripts/test.sh"', "$VIRTUAL_ENV/bin/python -m pytest",
+    '"$PWD/bin/x"', "env -S 'echo hi'", "echo foo#bar's",
     "git commit -m \"$(cat <<'EOF'\nfix: don't crash (really)\nEOF\n)\"",
     "gh pr create --body \"$(cat <<'EOF'\nit's (really) done\nEOF\n)\"",
     "grep -- --no-verify README.md", "rg -e --no-verify .", "ls # it's a comment with git",
@@ -83,6 +89,30 @@ class T(unittest.TestCase):
             print(f"perf {len(cmd)}B exit={code} {secs * 1000:.0f}ms")
             self.assertEqual(code, want, cmd[:40])
             self.assertLess(secs, 0.1, cmd[:40])
+
+    def test_unexpected_exception(self):
+        import importlib.util
+        src = HOOK.read_text().replace("def check(raw):", "def check(raw):\n    raise KeyError('boom')\n\ndef _unused(raw):", 1)
+        tmp = HOOK.parent.parent / "tests" / "_boom_guard.py"
+        tmp.write_text(src)
+        try:
+            for cmd, want in (("git status", 2), ("GIT status", 2), ("echo sh -c ls", 0)):
+                r = subprocess.run([sys.executable, str(tmp)], input=json.dumps({"tool_input": {"command": cmd}}),
+                                   capture_output=True, text=True)
+                self.assertEqual(r.returncode, want, cmd)
+                if want == 2:
+                    self.assertIn("guardrail error", r.stderr)
+        finally:
+            tmp.unlink()
+
+    def test_perf2(self):
+        cases = [("echo " + "$(a)" * 12400, 0), ('""' * 24990, 0), ("echo " + "<(a)" * 12400, 0),
+                 ("echo " + "`a`" * 12000, 0)]
+        for cmd, want in cases:
+            code, secs = timed(cmd)
+            print(f"perf2 {len(cmd)}B exit={code} {secs * 1000:.0f}ms")
+            self.assertEqual(code, want)
+            self.assertLess(secs, 0.1)
 
     def test_malformed_input(self):
         for stdin in ["", "not json", "{}", '{"tool_input":{"command":5}}']:

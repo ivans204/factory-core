@@ -36,3 +36,9 @@ Needs only python3 (stdlib).
 
 ## Proposed core change: job binding
 Binding moved from `.factory-job` alone to an index (`~/.config/factory/bindings.json`, `{worktree root: slug}`) plus the `.factory-job` file, written together by `hooks/factory-bind.py <worktree> <slug>` (and `--unbind <worktree>`). The index is authoritative: the recorder records under the index slug, and the stop gate blocks with "job binding tampered" if the file is missing or different. A worktree with no index entry still falls back to a plain `.factory-job`.
+
+## Known limits
+- A computed command name (`$VAR`, `$(...)`) is blocked only when the same command also names a git subcommand or a bypass flag.
+- Commands with no `git`, `HUSKY`, `LEFTHOOK`, `GIT_CONFIG` or shell word skip the deep scan, so they are never parse-checked.
+- Commands that contain `eval` or `sh -c` many times over can take about 200 ms to check.
+- The state guard is string based: globs, interpreters and indirect reads get through.
