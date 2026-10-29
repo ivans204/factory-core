@@ -25,7 +25,7 @@ Extracted templates/roster live in `templates/`; full cookbook text was in a ses
 - Binding a job (`hooks/factory-bind.py`) has to run outside the sandbox, by the human with `!`. That is by design.
 
 ## Next
-1. The user runs `! bash ~/orca/factory-core/tests/smoke.sh`. It can't run from inside a sandboxed Claude session: a nested `claude` inherits the parent sandbox, can't create `~/.claude/plugins/data/`, and the hooks fail open with exit 1. Still unverified: `PostToolUseFailure` additionalContext, SubagentStop with real payloads, Grep/Glob field names.
+1. ~~Smoke test~~ DONE 2026-10-29: 7/7 pass live (reset --hard and --no-verify blocked, sandbox write blocked, .factory-job delete blocked, key not leaked, receipts recorded and signed). Re-run after any hook change with `! bash ~/orca/factory-core/tests/smoke.sh`. Blocked calls leave no receipt (PreToolUse stops them before PostToolUse). It can't run from inside a sandboxed Claude session: a nested `claude` inherits the parent sandbox, can't create `~/.claude/plugins/data/`, and the hooks fail open with exit 1. Still unverified: `PostToolUseFailure` additionalContext, SubagentStop with real payloads, Grep/Glob field names.
 2. R3: Scribe and Shipwright agent definitions in `agents/`.
 3. P1: `~/.brain/lore/factory-callega/profile.md` from `templates/profile.md`.
 
