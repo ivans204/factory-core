@@ -18,8 +18,14 @@ Extracted templates/roster live in `templates/`; full cookbook text was in a ses
 - Recipe order from R0: R1 → **R3** (Scribe, Shipwright) → R2 → R5 → R4 → R7 → R6 → R8.
 - Pilot pack: `callega` (repo is still only a spec, `docs/spec/callega-spec.html`).
 
+## Enabled (2026-10-29, user said "napravi kaj moraš")
+- Plugin `factory@factory-core` is installed at user scope from the local marketplace `~/orca/factory-core`. Claude Code loads its hooks straight from the repo, so edits are live.
+- `~/.claude/settings.json` now has `sandbox` (enabled; writes allowed in ~/.brain, ~/Desktop/brain, ~/orca, ~/.orca and caches; reads denied for ~/.config/factory, ~/.ssh, ~/.aws, ~/.gnupg; docker excluded; allowLocalBinding). It also has `permissions.deny` (factory key, receipts, ssh, aws, gnupg, .env) and an `ask` rule on `Bash(dangerouslyDisableSandbox:true)`. Backup: `~/.claude/settings.json.bak-factory-20261029`.
+- The Orca hooks in settings.json are generic forwarders and coexist with the plugin hooks.
+- Binding a job (`hooks/factory-bind.py`) has to run outside the sandbox, by the human with `!`. That is by design.
+
 ## Next
-1. Enable the plugin plus sandbox plus deny rules, with the user's yes. First check for collisions with the user's existing hooks in `~/.claude/settings.json` (it already has hooks on most events). Then smoke-test in a live session: real payload shapes, `PostToolUseFailure` additionalContext, SubagentStop, and the Grep/Glob field names. All of these are UNVERIFIED.
+1. The user runs `! bash ~/orca/factory-core/tests/smoke.sh`. It can't run from inside a sandboxed Claude session: a nested `claude` inherits the parent sandbox, can't create `~/.claude/plugins/data/`, and the hooks fail open with exit 1. Still unverified: `PostToolUseFailure` additionalContext, SubagentStop with real payloads, Grep/Glob field names.
 2. R3: Scribe and Shipwright agent definitions in `agents/`.
 3. P1: `~/.brain/lore/factory-callega/profile.md` from `templates/profile.md`.
 
