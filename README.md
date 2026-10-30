@@ -16,8 +16,12 @@ Plugin `factory@factory-core` is installed at user scope; sandbox and deny rules
     python3 tests/test_guardrails.py
     python3 tests/test_receipts.py
     python3 tests/test_state.py
+    python3 tests/test_agents.py
 
 Needs only python3 (stdlib).
+
+## Contributing and license
+See `CONTRIBUTING.md`. MIT, see `LICENSE`.
 
 ## Threat model
 - The hooks guard against agent accidents and cheap tricks. They are not a shell parser and not a security boundary.

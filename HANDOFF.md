@@ -19,6 +19,7 @@ Extracted templates/roster live in `templates/`; full cookbook text was in a ses
 - Proposed core change vs cookbook: the job binding is index-first (`~/.config/factory/bindings.json` via `hooks/factory-bind.py`) and also writes `.factory-job`, so deleting the file can't silently disable the stop gate.
 - Recipe order from R0: R1 → **R3** (Scribe, Shipwright) → R2 → R5 → R4 → R7 → R6 → R8.
 - Pilot pack: `callega` (repo is still only a spec, `docs/spec/callega-spec.html`).
+- License is MIT (2026-10-30), chosen as the default when the user asked for a LICENSE without naming one. The repo is private, so it grants nothing to outsiders until the repo is shared. Before publishing, check `templates/` for third-party cookbook text (see Traps).
 
 ## Enabled (2026-10-29, user said "napravi kaj moraš")
 - Plugin `factory@factory-core` is installed at user scope from the local marketplace `~/orca/factory-core`. Claude Code loads its hooks straight from the repo, so edits are live.
