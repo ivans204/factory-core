@@ -1273,6 +1273,7 @@ s = sys.stdin.read()
 s = re.sub(r"<<-?\s*([\x27\x22]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(\n|$)", " ", s, flags=re.S)
 s = re.sub(r"\x27[^\x27]*\x27", "\x27\x27", s)
 s = re.sub(r"\x22(?:[^\x22\\\\]|\\\\.)*\x22", "\x22\x22", s)
+s = s.replace("\\\n", "")
 print(s)
 ' 2>/dev/null || printf '%s' "$RAW")
 
@@ -1293,7 +1294,7 @@ echo "$COMMAND" | grep -qE "${G}stash[[:space:]]+(drop|clear)" &&
   block "git stash drop/clear deletes stashed work." "keep it and say it exists."
 # Add your project's gate-bypass switches to this pattern.
 # Reading core.hooksPath changes nothing, so a read with no value after the key is not a bypass.
-READS="${G}config([[:space:]]+(--(local|global|system|get|get-all)|get))*[[:space:]]+core\\.hooksPath([[:space:]]*[0-9]*>&?[^[:space:];&|)]+)*[[:space:]]*(;|&|\\||\\)|\`|\$)"
+READS="${G}config([[:space:]]+(--(local|global|system|get|get-all)|get))*[[:space:]]+core\\.hooksPath([[:space:]]*[0-9]*>&?[^[:space:];&|)\\\\]+)*[[:space:]]*(;|&|\\||\\)|\`|\$)"
 echo "$COMMAND" | sed -E "s/$READS/ ; /g" | grep -qE -- '--no-verify|(^|[[:space:]])LEFTHOOK=(0|false)|(^|[[:space:]])HUSKY=0|core\.hooksPath' &&
   block "commit and push gates are not bypassed by agents." "fix what the gate reports, or stop and say what it reported."
 echo "$COMMAND" | grep -qE "${G}push[[:space:]]" && echo "$COMMAND" | grep -qE -- '(--force([[:space:]]|$)|[[:space:]]-f([[:space:]]|$)|[[:space:]]\+[^[:space:]]+)' &&
