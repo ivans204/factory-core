@@ -119,7 +119,7 @@ Method text adapted from mattpocock/skills (MIT): writing-for-agents, grilling,
 code-review, to-tickets, implement-spec, diagnosing-bugs, wayfinder,
 git-guardrails-claude-code, pr, retro, wait-what.
 
-Cookbook: https://claude.ai/artifact/HWw6sKXZuBHWSvSH64TZh9
+Cookbook: https://claude.ai/artifact/595m4zw5MDYLLV2VcSbMP1
 FACTORY_EOF
 
 w agents/arbiter.md <<'FACTORY_EOF'

@@ -2,7 +2,7 @@
 
 The source of the software factory core (`/relay`, 17 agents, contract, hooks,
 templates) and of the cookbook page that ships it:
-https://claude.ai/artifact/HWw6sKXZuBHWSvSH64TZh9
+https://claude.ai/artifact/595m4zw5MDYLLV2VcSbMP1
 
 | Path | What |
 | --- | --- |
