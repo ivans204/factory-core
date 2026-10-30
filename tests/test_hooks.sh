@@ -26,7 +26,7 @@ mention git reset --hard in the body
 EOF"
 
 # Stop gate: a claim must cite a receipt the agent recorded in this run.
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/test_hooks.XXXXXX") || exit 1; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/wt" "$tmp/brain/job/demo/relay/receipts"
 echo demo > "$tmp/wt/.factory-job"
 echo '{"id": "R-abc123"}' > "$tmp/brain/job/demo/relay/receipts/builder-a1.jsonl"
@@ -36,5 +36,23 @@ gate() { jq -n --arg m "$1" --arg cwd "$tmp/wt" \
 case "$(gate $'claims:\n- tests pass R-abc123')" in "") echo "ok   gate passes a cited receipt";; *) echo "FAIL gate passes a cited receipt"; fail=1;; esac
 case "$(gate $'claims:\n- tests pass')" in *block*) echo "ok   gate blocks a bare claim";; *) echo "FAIL gate blocks a bare claim"; fail=1;; esac
 case "$(gate $'claims:\n- tests pass R-ffffff')" in *block*) echo "ok   gate blocks an unknown receipt";; *) echo "FAIL gate blocks an unknown receipt"; fail=1;; esac
+
+# Receipts: secrets never reach the log, a bad slug or agent never leaves the brain.
+rec() { jq -n --arg cwd "$tmp/wt" --arg a "${1:-builder}" '{hook_event_name: "PostToolUse", cwd: $cwd,
+  tool_use_id: "t1", tool_name: "Bash", agent_type: $a, agent_id: "a2",
+  tool_input: {command: "curl -H \"Authorization: Bearer abc.def\" -d API_KEY=hunter2", env: {DB_PASSWORD: "plainpw"}},
+  tool_response: {stdout: "ok ghp_abcdefgh12345678 PASSWORD=hunter3 -----BEGIN RSA PRIVATE KEY-----\nMIIEkey\n-----END RSA PRIVATE KEY-----"}}' |
+  FACTORY_BRAIN="$tmp/brain" python3 "$HOOKS/receipts.py"; }
+check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+out=$(rec); log="$tmp/brain/job/demo/relay/receipts/builder-a2.jsonl"
+check "receipt is announced" '[[ $out == *"receipt R-"* ]]'
+check "receipt keeps the output" 'grep -q "ok \[REDACTED\]" "$log"'
+check "receipt redacts secrets" '[ -s "$log" ] && ! grep -qE "abc\.def|hunter2|hunter3|plainpw|ghp_|MIIEkey" "$log"'
+check "receipt log is owner-only" '[ "$(stat -f %Lp "$log" 2>/dev/null || stat -c %a "$log")" = 600 ]'
+rec "../../../../escaped" >/dev/null
+check "agent name cannot leave the log directory" '[ -z "$(find "$tmp" -name "*escaped*" ! -path "$tmp/brain/job/demo/relay/receipts/*")" ]'
+echo '../../outside' > "$tmp/wt/.factory-job"; rec >/dev/null
+check "bad slug writes nothing" '[ ! -e "$tmp/outside" ] && [ ! -e "$tmp/brain/outside" ]'
+echo demo > "$tmp/wt/.factory-job"
 
 exit $fail
