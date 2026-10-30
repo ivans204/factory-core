@@ -1,45 +1,47 @@
 # factory-core
 
-Claude Code plugin skeleton (name `factory`, v0.1.0): the factory contract, git guardrails, receipt hooks, and templates.
+The source of the software factory core (`/relay`, 17 agents, contract, hooks,
+templates) and of the cookbook page that ships it:
+https://claude.ai/artifact/HWw6sKXZuBHWSvSH64TZh9
 
-Plugin `factory@factory-core` is installed at user scope; sandbox and deny rules are on (see HANDOFF "Enabled"). Two agents (scribe, shipwright) exist; no skills.
+| Path | What |
+| --- | --- |
+| `kit/` | the core, exactly as it installs to `~/.claude/factory-core/`. Agents carry `model: {{tier}}`. **Edit here.** |
+| `install.sh` | built from `kit/`. Writes the core to `~/.claude/factory-core`, links agents into `~/.claude/agents/` and `/relay` into `~/.claude/skills/relay`. |
+| `cookbook/kuharica.html` | the page. Prose is edited by hand; every `data-path` block (the Kit) is generated. |
+| `scripts/build.py` | rebuilds `install.sh` and the page's Kit from `kit/`. `--check` fails when either is stale. |
+| `scripts/fold.py` | brings edits made in `~/.claude/factory-core` (retro, hand edit) back into `kit/`. |
+| `tests/test_hooks.sh` | guardrails and stop gate on a few must-block / must-pass inputs. |
 
-## Layout
-- `.claude-plugin/plugin.json` plugin manifest
-- `knowledge/` contract.md (shared by every agent), README.txt
-- `hooks/` hooks.json plus `factory-git-guardrails.py` (PreToolUse Bash), `factory-state-guard.py` (PreToolUse, protects factory state), `factory-bind.py` (CLI: bind a worktree to a job), `factory-receipts.py` (PostToolUse and PostToolUseFailure), `factory-stop-gate.py` (SubagentStop)
-- `templates/` agent, skill, recipe, profile and job-file templates, roles roster
-- `agents/` role definitions: scribe.md, shipwright.md (R3); README.txt
-- `tests/` hook tests (test_guardrails.py, test_receipts.py, test_state.py) and test_agents.py
+## Change relay (or any core file)
 
-## Tests
-    python3 tests/test_guardrails.py
-    python3 tests/test_receipts.py
-    python3 tests/test_state.py
+    $EDITOR kit/skills/relay/SKILL.md
+    python3 scripts/build.py      # install.sh + page Kit
+    bash install.sh               # updates ~/.claude/factory-core in place; links already point there
+    git commit -am "relay: <the lesson>" && git push
 
-Needs only python3 (stdlib).
+`install.sh` remembers the model tiers from the last run in
+`~/.claude/factory-core/.factory-core`, so a rerun needs no variables. First
+install on a machine: `DECIDE=fable bash install.sh`.
 
-## Threat model
-- The hooks guard against agent accidents and cheap tricks. They are not a shell parser and not a security boundary.
-- The git guardrails are one linear pass (heredocs, `$(...)`, backticks, `eval`, `sh -c`, `find -exec`); computed command names are refused. Variable tricks beyond that, other interpreters and scripts are not inspected.
-- The receipt HMAC is tamper-evidence, not secrecy: any process running as the user can read the key.
-- The real boundary is the sandbox plus permission deny rules. Recommended (NOT applied by this repo):
+## Everywhere else
 
-```json
-{
-  "sandbox": {"enabled": true},
-  "permissions": {"deny": [
-    "Read(~/.config/factory/**)", "Edit(~/.config/factory/**)", "Write(~/.config/factory/**)",
-    "Edit(~/.brain/job/*/relay/receipts/**)", "Write(~/.brain/job/*/relay/receipts/**)"
-  ]}
-}
-```
+- **Another machine of mine:** `git clone` (or `git pull`), then `bash install.sh`.
+- **Someone without this repo:** the cookbook page. After a change, ask Claude to
+  publish `cookbook/kuharica.html` to the artifact URL above; its `install.sh`
+  is the one built here, and rerunning it updates their core in place.
 
-## Proposed core change: job binding
-Binding moved from `.factory-job` alone to an index (`~/.config/factory/bindings.json`, `{worktree root: slug}`) plus the `.factory-job` file, written together by `hooks/factory-bind.py <worktree> <slug>` (and `--unbind <worktree>`). The index is authoritative: the recorder records under the index slug, and the stop gate blocks with "job binding tampered" if the file is missing or different. A worktree with no index entry still falls back to a plain `.factory-job`.
+## A change made in the installed core
 
-## Known limits
-- A computed command name (`$VAR`, `$(...)`) is blocked only when the same command also names a git subcommand or a bypass flag.
-- Commands with no `git`, `HUSKY`, `LEFTHOOK`, `GIT_CONFIG` or shell word skip the deep scan, so they are never parse-checked.
-- Commands that contain `eval` or `sh -c` many times over can take about 200 ms to check.
-- The state guard is string based: globs, interpreters and indirect reads get through.
+`install.sh` refuses to overwrite `~/.claude/factory-core` when it has commits
+or edits since the last install. Fold them back first:
+
+    python3 scripts/fold.py && git diff kit/
+    git commit -am "<what and why>" && python3 scripts/build.py
+    FORCE=1 bash install.sh
+
+## History
+
+Tag `r1-plugin` is the earlier `factory` plugin (Python guardrails with HMAC
+receipts, job binding index, scribe and shipwright only), built from the first
+version of the cookbook. The kit replaced it on 2026-10-30.

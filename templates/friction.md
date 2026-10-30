@@ -1,3 +1,0 @@
-- 2026-10-29 · builder · added a "show more" nobody asked for · "Ovaj show more nismo imali do sad, zasto si ga dodao?"
-- 2026-10-29 · shipwright · commit gate counted master's files on a merge commit · ""
-- 2026-10-29 · builder · died on rate limit, slice uncommitted · ""
