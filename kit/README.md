@@ -35,7 +35,8 @@ decisions > the pack > a core definition.
 ## After install.sh
 
 1. Merge `settings-hooks.json` into `~/.claude/settings.json` (keep the hooks
-   you already have). Restart Claude Code. `/agents` should list the 17 agents.
+   you already have). Restart Claude Code. `ls ~/.claude/agents` should list the
+   17 agents; Claude Code no longer has an `/agents` screen to show them in.
 2. Check the guardrails: ask Claude to run `git reset --hard` in a scratch repo;
    it must be blocked. A commit message that mentions it must pass.
 3. Brain: if you have none, `mkdir -p ~/.brain/{job,lore} && git -C ~/.brain init`.
