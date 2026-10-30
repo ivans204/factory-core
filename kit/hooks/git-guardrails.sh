@@ -33,7 +33,9 @@ echo "$COMMAND" | grep -qE "${G}branch[[:space:]]+(.*[[:space:]])?-D" &&
 echo "$COMMAND" | grep -qE "${G}stash[[:space:]]+(drop|clear)" &&
   block "git stash drop/clear deletes stashed work." "keep it and say it exists."
 # Add your project's gate-bypass switches to this pattern.
-echo "$COMMAND" | grep -qE -- '--no-verify|(^|[[:space:]])LEFTHOOK=(0|false)|(^|[[:space:]])HUSKY=0|core\.hooksPath' &&
+# Reading core.hooksPath changes nothing, so a read with no value after the key is not a bypass.
+READS="${G}config([[:space:]]+(--(local|global|system|get|get-all)|get))*[[:space:]]+core\\.hooksPath([[:space:]]*[0-9]*>&?[^[:space:];&|)]+)*[[:space:]]*(;|&|\\||\\)|\`|\$)"
+echo "$COMMAND" | sed -E "s/$READS/ ; /g" | grep -qE -- '--no-verify|(^|[[:space:]])LEFTHOOK=(0|false)|(^|[[:space:]])HUSKY=0|core\.hooksPath' &&
   block "commit and push gates are not bypassed by agents." "fix what the gate reports, or stop and say what it reported."
 echo "$COMMAND" | grep -qE "${G}push[[:space:]]" && echo "$COMMAND" | grep -qE -- '(--force([[:space:]]|$)|[[:space:]]-f([[:space:]]|$)|[[:space:]]\+[^[:space:]]+)' &&
   block "a plain force push can overwrite someone else's commits." "use --force-with-lease, only on your own branch."
