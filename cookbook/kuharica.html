@@ -234,7 +234,7 @@ footer { max-width: 1060px; margin: 0 auto; color: var(--muted); font-size: 13px
       <div class="stack" style="gap:4px"><span class="tag core">Core</span><h3>Kako tvornica radi</h3><div class="where">~/.claude/factory-core/ · agenti i /relay linkani u ~/.claude · cijeli je u Kitu na ovoj stranici</div></div>
       <ul>
         <li>Ugovor koji svaki agent čita prvi: gdje što stoji, tko piše koju datoteku, oblik povratka s dokazima.</li>
-        <li>Šesnaest gotovih definicija agenata bez ijedne naredbe ili putanje projekta. Gdje treba naredba, piše „ključ <code>checks.fast</code> iz profila“.</li>
+        <li>Sedamnaest gotovih definicija agenata bez ijedne naredbe ili putanje projekta. Gdje treba naredba, piše „ključ <code>checks.fast</code> iz profila“.</li>
         <li>Orkestrator <code>/relay</code> (skill u Kitu), map mode, tri hooka, predlošci.</li>
         <li>Mijenja se rijetko i uz razlog u commitu. Jednom dobra lekcija u coreu pomaže svakom projektu.</li>
       </ul>
@@ -467,7 +467,7 @@ footer { max-width: 1060px; margin: 0 auto; color: var(--muted); font-size: 13px
 <!-- ============ EKIPA ============ -->
 <section id="ekipa">
   <div class="eyebrow">Core + paket</div>
-  <h2>Ekipa: orkestrator i šesnaest agenata</h2>
+  <h2>Ekipa: orkestrator i sedamnaest agenata</h2>
   <p class="prose">Svaka uloga ima jedan posao, najmanji skup alata koji ga obavlja i jednu datoteku u koju piše. Gornji dio kartice je core i isti je na svakom projektu; cijela definicija je u <a href="#kit">Kitu</a>. Ljubičasti dio pokazuje što paket projekta obično dodaje toj ulozi, odnosno što ide u <code>roles/&lt;uloga&gt;.md</code>.</p>
   <div class="roster" id="roster"></div>
 </section>
@@ -631,7 +631,7 @@ footer { max-width: 1060px; margin: 0 auto; color: var(--muted); font-size: 13px
 <section id="kit">
   <div class="eyebrow">Core, gotov</div>
   <h2>Kit: cijeli core na ovoj stranici</h2>
-  <p class="prose">Sve što core treba je ovdje, bez ičega izvan stranice: ugovor, šesnaest agenata, orkestrator <code>/relay</code> s map modeom, tri hooka, predlošci i README. Datoteke su na engleskom jer ih čitaju agenti; orkestrator s tobom razgovara na jeziku iz <code>human.language</code>.</p>
+  <p class="prose">Sve što core treba je ovdje, bez ičega izvan stranice: ugovor, sedamnaest agenata, orkestrator <code>/relay</code> s map modeom, tri hooka, predlošci i README. Datoteke su na engleskom jer ih čitaju agenti; orkestrator s tobom razgovara na jeziku iz <code>human.language</code>.</p>
   <div class="grid2">
     <div class="stack">
       <h3>Instalacija jednom skriptom</h3>
@@ -5465,7 +5465,7 @@ const RECIPES = [
     done: "imaš pet izvora trenja s brojevima i citatima, i redoslijed recepata." },
   { num: "R1", t: "Instaliraj core", ing: ["install.sh iz Kita", "git, jq, python3"],
     steps: ["<code>bash install.sh</code>, s modelima po razredu ako ih mijenjaš (<code>DECIDE=fable</code>).", "Spoji <code>~/.claude/factory-core/settings-hooks.json</code> u <code>~/.claude/settings.json</code> i restartaj Claude Code.", "Brain: postojeći, ili najmanji prema sekciji Brain i README-u. <code>FACTORY_BRAIN</code> ako nije u <code>~/.brain</code>.", "Probaj guardrails: <code>git reset --hard</code> u probnom repou mora biti blokiran, a commit poruka koja ga spominje mora proći."],
-    done: "<code>/agents</code> pokazuje šesnaest agenata, <code>/relay</code> postoji, a guardrails blokira i propušta kako treba." },
+    done: "<code>/agents</code> pokazuje sedamnaest agenata, <code>/relay</code> postoji, a guardrails blokira i propušta kako treba." },
   { num: "P1", pk: true, t: "Paket projekta", ing: ["templates/profile.md", "templates/role-addendum.md"],
     steps: ["<code>&lt;brain&gt;/lore/factory-&lt;projekt&gt;/</code> s <code>profile.md</code>. Popuni iz repoa: skripte, CI konfiguracija, upute za doprinose, PR predložak, design system. Ili to prepusti Claudeu promptom iz sekcije Novi projekt.", "Obriši opcionalne blokove koji ne vrijede; uloge koje o njima ovise se isključe.", "<code>roles/&lt;agent&gt;.md</code> samo za agenta kojem treba nešto istinito samo ovdje. Primjer na ovoj stranici ima builder.", "<code>policy</code>: što te uvijek pitati, što Arbiter smije sam, zadana autonomija."],
     done: "svaki ključ profila ima vrijednost ili je blok obrisan, a nijedna rečenica iz paketa ne bi bila istinita u drugom repou." },
@@ -5511,7 +5511,7 @@ document.querySelectorAll("script[data-path]").forEach(s => { KIT[s.dataset.path
 const GROUPS = [
   ["README.md", "Početak: što je ovo, instalacija, paket, prvi job"],
   ["knowledge/", "Ugovor koji svaki agent čita prvi"],
-  ["agents/", "Šesnaest agenata"],
+  ["agents/", "Sedamnaest agenata"],
   ["skills/relay/", "Orkestrator /relay i map mode"],
   ["hooks/", "Guardrails, bilježenje dokaza, stop gate"],
   ["settings-hooks.json", "Registracija hookova za ~/.claude/settings.json"],
